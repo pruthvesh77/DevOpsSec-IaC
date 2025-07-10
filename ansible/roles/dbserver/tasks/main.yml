@@ -1,0 +1,49 @@
+---
+- name: Install MySQL server
+  ansible.builtin.apt:
+    name: mysql-server
+    state: present
+
+- name: Start and enable MySQL service
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Configure MySQL root password (before Secure Installation)
+  ansible.builtin.mysql_user:
+    name: root
+    host: localhost
+    password: "{{ mysql_root_password }}"
+    state: present
+  no_log: true # Prevent password from showing in logs
+
+- name: Apply MySQL configuration from template
+  ansible.builtin.template:
+    src: my.cnf.j2
+    dest: /etc/mysql/my.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart mysql
+
+- name: Create 'appuser' database user
+  community.mysql.mysql_user:
+    name: appuser
+    host: '%' # Allow connection from any host (adjust if needed for strict security)
+    password: "{{ db_password }}"
+    priv: '*.*:ALL' # Grant all privileges on all databases (adjust for least privilege)
+    state: present
+  no_log: true
+
+- name: Create 'appdb' database
+  community.mysql.mysql_db:
+    name: appdb
+    state: present
+
+- name: Allow MySQL (port 3306) from webserver through UFW
+  community.general.ufw:
+    rule: allow
+    port: '3306'
+    proto: tcp
+    from: 192.168.56.10 # Allow only from webserver IP

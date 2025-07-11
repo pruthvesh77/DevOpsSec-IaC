@@ -1,0 +1,46 @@
+---
+- name: Configure Webserver
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Ensure webserver is updated
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+      notify:
+        - Start Nginx
+
+  handlers:
+    - name: Start Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+- name: Configure DBserver
+  hosts: dbservers
+  become: yes
+  tasks:
+    - name: Ensure dbserver is updated
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install MySQL
+      apt:
+        name: mysql-server
+        state: present
+      notify:
+        - Start MySQL
+
+  handlers:
+    - name: Start MySQL
+      service:
+        name: mysql
+        state: started
+        enabled: yes

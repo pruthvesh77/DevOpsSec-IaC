@@ -37,6 +37,16 @@
         state: present
       notify:
         - Start MySQL
+    
+    - name: Set MySQL root password
+      community.mysql.mysql_user:
+        name: root
+        host: localhost
+        password: "mossad1234" 
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        check_password_length: no
+        check_implicit_privs: no 
+      no_log: true
 
   handlers:
     - name: Start MySQL

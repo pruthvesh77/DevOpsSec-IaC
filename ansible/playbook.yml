@@ -1,56 +1,308 @@
 ---
 - name: Configure Webserver
-  hosts: webservers
+  hosts: webserver # Changed from webservers for singular host
   become: yes
   tasks:
     - name: Ensure webserver is updated
-      apt:
+      ansible.builtin.apt: # Added fully qualified collection name
         update_cache: yes
         upgrade: dist
 
     - name: Install Nginx
-      apt:
+      ansible.builtin.apt: # Added fully qualified collection name
         name: nginx
         state: present
       notify:
         - Start Nginx
+    
+    # --- Firewall Configuration for Webserver ---
+    - name: Install UFW on webserver
+      ansible.builtin.apt: # Added fully qualified collection name
+        name: ufw
+        state: present
+
+    - name: Deny all incoming traffic by default on webserver
+      ansible.builtin.ufw: # Added fully qualified collection name
+        direction: incoming
+        policy: deny
+
+    - name: Allow SSH (port 22) from private network on webserver
+      ansible.builtin.ufw: # Added fully qualified collection name
+        rule: allow
+        port: '22'
+        proto: tcp
+        from: 192.168.56.0/24
+
+    - name: Allow HTTP (port 80) from private network on webserver
+      ansible.builtin.ufw: # Added fully qualified collection name
+        rule: allow
+        port: '80'
+        proto: tcp
+        from: 192.168.56.0/24 # For internal access or testing from DBserver
+
+    - name: Enable UFW on webserver
+      ansible.builtin.ufw: # Added fully qualified collection name
+        state: enabled
+    # --- End Firewall Configuration for Webserver ---
+
+    # --- SSL/TLS Configuration for Nginx ---
+    - name: Create SSL directory for Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/ssl
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Generate Nginx SSL private key
+      community.crypto.openssl_privatekey:
+        path: /etc/nginx/ssl/nginx.key
+        size: 2048
+        mode: '0600' # Secure permissions for private key
+        owner: root
+        group: root
+
+    - name: Generate Nginx self-signed certificate signing request (CSR)
+      community.crypto.openssl_csr:
+        path: /etc/nginx/ssl/nginx.csr
+        privatekey_path: /etc/nginx/ssl/nginx.key
+        common_name: "webserver.local" # Use a descriptive common name
+        country_name: CA
+        state_or_province_name: Ontario
+        locality_name: Brampton
+        organization_name: DevOpsSecLab
+        email_address: admin@example.com
+
+    - name: Sign Nginx certificate with own CA (self-signed)
+      community.crypto.x509_certificate:
+        path: /etc/nginx/ssl/nginx.crt
+        csr_path: /etc/nginx/ssl/nginx.csr
+        privatekey_path: /etc/nginx/ssl/nginx.key
+        provider: selfsigned # Use self-signed
+        selfsigned_not_after: "+365d" # Corrected parameter
+      notify:
+        - Restart Nginx # Nginx needs to restart to pick up new certs
+
+    - name: Configure Nginx to listen on HTTPS (443)
+      ansible.builtin.blockinfile:
+        path: /etc/nginx/sites-available/default
+        block: |
+          listen 443 ssl default_server;
+          listen [::]:443 ssl default_server;
+          ssl_certificate /etc/nginx/ssl/nginx.crt;
+          ssl_certificate_key /etc/nginx/ssl/nginx.key;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          ssl_prefer_server_ciphers on;
+          ssl_ciphers 'EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH';
+          ssl_dhparam /etc/ssl/certs/dhparam.pem; # Ensure this file exists or generate it
+        insertafter: 'listen 80 default_server;' # Inserts after the existing listen 80 line
+        backup: yes # Creates a .bak file of the original config
+      notify:
+        - Restart Nginx
+
+    - name: Generate strong Diffie-Hellman parameters (if not exists, takes time)
+      ansible.builtin.command: openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
+      args:
+        creates: /etc/ssl/certs/dhparam.pem # Only runs if file doesn't exist
+      become: true # Needs root for this command
+    # --- End SSL/TLS Configuration ---
+
+    # --- Add UFW rule for HTTPS (port 443) to allow secure web traffic ---
+    - name: Allow HTTPS (port 443) from private network on webserver
+      ansible.builtin.ufw: # Added fully qualified collection name
+        rule: allow
+        port: '443'
+        proto: tcp
+        from: 192.168.56.0/24
+    # --- End UFW rule for HTTPS ---
+
+    # --- Data at Rest Encryption (Demonstration with GPG) ---
+    - name: Ensure GnuPG is installed for file encryption demo
+      ansible.builtin.apt: # Added fully qualified collection name
+        name: gnupg
+        state: present
+
+    - name: Create a dummy sensitive file for GPG demo
+      ansible.builtin.copy:
+        content: |
+          This is highly sensitive data that should be encrypted.
+          It includes API keys, database credentials, or other secrets.
+        dest: /tmp/sensitive_data.txt
+        mode: '0600' # Restrict permissions
+
+    - name: Encrypt the dummy sensitive file using GPG (manual step for demo)
+      ansible.builtin.debug:
+        msg: |
+          To encrypt a file manually on the VM using GPG:
+          1. SSH into the VM: `vagrant ssh webserver`
+          2. Change to /tmp: `cd /tmp`
+          3. Encrypt: `gpg --symmetric --cipher-algo AES256 --passphrase "your_strong_encryption_passphrase" -o sensitive_data.txt.gpg sensitive_data.txt`
+          4. Delete original: `rm sensitive_data.txt`
+          To decrypt: `gpg --output decrypted_data.txt --passphrase "your_strong_encryption_passphrase" sensitive_data.txt.gpg`
+    # --- End Data at Rest Encryption ---
+
+    # --- Security Auditing with Lynis ---
+    - name: Install Lynis on webserver
+      ansible.builtin.apt: # Added fully qualified collection name
+        name: lynis
+        state: present
+
+    - name: Run Lynis security audit on webserver
+      ansible.builtin.command: lynis audit system --quick --no-colors --report-file /var/log/lynis-report.txt
+      register: lynis_result_web
+      changed_when: false # This task doesn't change system state
+      args:
+        chdir: /tmp # Run from /tmp to avoid issues with /vagrant permissions
+      ignore_errors: yes # Lynis might exit with non-zero on warnings, don't fail playbook
+
+    - name: Display Lynis audit warnings/suggestions for webserver
+      ansible.builtin.debug:
+        msg: |
+          Lynis Audit for Webserver:
+          Warnings: {{ (lynis_result_web.stdout_lines | select('match', '^WARNING') | list) if lynis_result_web.stdout_lines else [] }}
+          Suggestions: {{ (lynis_result_web.stdout_lines | select('match', '^SUGGESTION') | list) if lynis_result_web.stdout_lines else [] }}
+          Full report: /var/log/lynis-report.txt on webserver
+    # --- End Security Auditing ---
 
   handlers:
     - name: Start Nginx
-      service:
+      ansible.builtin.service: # Added fully qualified collection name
         name: nginx
         state: started
         enabled: yes
+    - name: Restart Nginx
+      ansible.builtin.service: # Added fully qualified collection name
+        name: nginx
+        state: restarted
 
 - name: Configure DBserver
-  hosts: dbservers
+  hosts: dbserver
   become: yes
+  vars:
+    mysql_root_password: "MyStrongRootPassword!"  # Change this securely
+
   tasks:
     - name: Ensure dbserver is updated
-      apt:
+      ansible.builtin.apt:
         update_cache: yes
         upgrade: dist
 
     - name: Install MySQL
-      apt:
+      ansible.builtin.apt:
         name: mysql-server
         state: present
       notify:
         - Start MySQL
     
-    - name: Set MySQL root password
-      community.mysql.mysql_user:
-        name: root
-        host: localhost
-        password: "mossad1234" 
-        login_unix_socket: /var/run/mysqld/mysqld.sock
-        check_password_length: no
-        check_implicit_privs: no 
+    - name: Ensure MySQL service is started and enabled
+      ansible.builtin.service:
+        name: mysql
+        state: started
+        enabled: true
+
+    - name: Wait for MySQL to start and be ready
+      ansible.builtin.wait_for:
+        port: 3306
+        host: 127.0.0.1
+        timeout: 120
+        state: started
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Short pause to ensure MySQL socket is fully ready
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Set MySQL root password using direct command
+      ansible.builtin.command: >
+        mysql -S /var/run/mysqld/mysqld.sock -u root -e 
+        "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;"
+      args:
+        # Prevents this task from running on subsequent playbook runs if the password is already set
+        creates: /var/lib/mysql/mysql_root_password_set_flag 
+      changed_when: true # Assume change as we are forcing it
       no_log: true
+
+    # --- Firewall Configuration for DBserver ---
+    - name: Install UFW on dbserver
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    - name: Deny all incoming traffic by default on dbserver
+      ansible.builtin.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Allow SSH (port 22) from private network on dbserver
+      ansible.builtin.ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+        from: 192.168.56.0/24
+
+    - name: Allow MySQL (port 3306) from webserver only
+      ansible.builtin.ufw:
+        rule: allow
+        port: '3306'
+        proto: tcp
+        from: 192.168.56.10
+
+    - name: Enable UFW on dbserver
+      ansible.builtin.ufw:
+        state: enabled
+    # --- End Firewall Configuration for DBserver ---
+
+    # --- Data at Rest Encryption (Demonstration with GPG) ---
+    - name: Ensure GnuPG is installed for file encryption demo on DBserver
+      ansible.builtin.apt:
+        name: gnupg
+        state: present
+
+    - name: Create a dummy sensitive file for GPG demo on DBserver
+      ansible.builtin.copy:
+        content: |
+          This is highly sensitive database configuration data.
+          It includes connection strings, and user credentials.
+        dest: /tmp/db_sensitive_data.txt
+        mode: '0600'
+
+    - name: Encrypt the dummy sensitive file using GPG (manual step for demo) on DBserver
+      ansible.builtin.debug:
+        msg: |
+          To encrypt a file manually on the DBserver VM using GPG:
+          1. SSH into the DBserver: `vagrant ssh dbserver`
+          2. Change to /tmp: `cd /tmp`
+          3. Encrypt: `gpg --symmetric --cipher-algo AES256 --passphrase "another_strong_encryption_passphrase" -o db_sensitive_data.txt.gpg db_sensitive_data.txt`
+          4. Delete original: `rm db_sensitive_data.txt`
+          To decrypt: `gpg --output decrypted_db_data.txt --passphrase "another_strong_encryption_passphrase" db_sensitive_data.txt.gpg`
+    # --- End Data at Rest Encryption ---
+
+    # --- Security Auditing with Lynis ---
+    - name: Install Lynis on dbserver
+      ansible.builtin.apt:
+        name: lynis
+        state: present
+
+    - name: Run Lynis security audit on dbserver
+      ansible.builtin.command: lynis audit system --quick --no-colors --report-file /var/log/lynis-report-db.txt
+      register: lynis_result_db
+      changed_when: false
+      args:
+        chdir: /tmp
+      ignore_errors: yes
+
+    - name: Display Lynis audit warnings/suggestions for dbserver
+      ansible.builtin.debug:
+        msg: |
+          Lynis Audit for DBserver:
+          Warnings: {{ (lynis_result_db.stdout_lines | select('match', '^WARNING') | list) if lynis_result_db.stdout_lines else [] }}
+          Suggestions: {{ (lynis_result_db.stdout_lines | select('match', '^SUGGESTION') | list) if lynis_result_db.stdout_lines else [] }}
+          Full report: /var/log/lynis-report-db.txt on dbserver
+    # --- End Security Auditing ---
 
   handlers:
     - name: Start MySQL
-      service:
+      ansible.builtin.service:
         name: mysql
         state: started
         enabled: yes

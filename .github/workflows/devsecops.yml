@@ -20,7 +20,7 @@ jobs:
         run: pip install flask
 
       - name: Build Docker Image
-        run: docker build -t flask_app ./docker
+        run: docker build -t flask_app .
 
       - name: Run OWASP ZAP Scan
         run: bash zap/zap-baseline.sh

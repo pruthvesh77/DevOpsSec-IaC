@@ -1,10 +1,6 @@
 Vagrant.configure("2") do |config|
-<<<<<<< HEAD
-  config.vm.box = "ubuntu/focal64"
-=======
   config.vm.boot_timeout = 600
   config.vm.box = "ubuntu/jammy64"
->>>>>>> 4ddc8e7 (Added Ansible playbook and app structure)
   config.vm.hostname = "devsecops-vm"
 
   config.vm.network "forwarded_port", guest: 5000, host: 5000
@@ -12,14 +8,12 @@ Vagrant.configure("2") do |config|
 
   config.vm.provider "virtualbox" do |vb|
     vb.memory = "2048"
-<<<<<<< HEAD
     vb.cpus = 2
   end
 
   config.vm.provision "shell", inline: <<-SHELL
     apt-get update
     apt-get install -y python3 python3-pip docker.io ansible git unzip openjdk-21-jdk
-=======
     vb.cpus = 2 
   end
 
@@ -30,7 +24,6 @@ Vagrant.configure("2") do |config|
     apt-get update --fix-missing
     apt-get install -y ansible || apt-get install -y ansible
     groupadd -f docker
->>>>>>> 4ddc8e7 (Added Ansible playbook and app structure)
     usermod -aG docker vagrant
   SHELL
 end

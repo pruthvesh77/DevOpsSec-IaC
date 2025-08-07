@@ -1,0 +1,30 @@
+---
+- name: Deploy and secure web app
+  hosts: localhost
+  become: yes
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+
+    - name: Start Docker
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Build app image
+      docker_image:
+        name: flask_app
+        build:
+          path: ../docker
+
+    - name: Run app container
+      docker_container:
+        name: flask_app
+        image: flask_app
+        state: started
+        ports:
+          - "5000:5000"
